@@ -190,6 +190,19 @@ DECODE_ENDPOINT=http://localhost:8000/decode
 **Testing:** none added, same rationale as react-login — verified manually
 end-to-end once implemented.
 
+## Shared dev constants
+
+These exact literal values are used verbatim across `mock-oidc-provider`,
+`decode-service`, and `next-login` — they must match byte-for-byte since
+`decode-service` verifies JWTs signed by `mock-oidc-provider`, and
+`next-login` authenticates as the confidential client `mock-oidc-provider`
+registers.
+
+| Constant | Value |
+| --- | --- |
+| JWT signing secret (HS256), env var `JWT_DEV_SECRET` on both `mock-oidc-provider` and `decode-service` | `dev-only-insecure-shared-secret-do-not-use-in-prod` |
+| Confidential client secret, env var `OIDC_CLIENT_SECRET` on `next-login`, hardcoded as `next-login-confidential`'s secret in `mock-oidc-provider` | `next-login-dev-secret-do-not-use-in-prod` |
+
 ## Ports (local dev)
 
 | Service | Port |
