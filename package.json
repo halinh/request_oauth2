@@ -3,6 +3,26 @@
   "version": "0.1.0",
   "description": "Isomorphic TypeScript OIDC/OAuth2 authorization_code + PKCE client",
   "type": "module",
+  "license": "MIT",
+  "author": "halinh",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/halinh/request_oauth2.git"
+  },
+  "homepage": "https://github.com/halinh/request_oauth2#readme",
+  "bugs": {
+    "url": "https://github.com/halinh/request_oauth2/issues"
+  },
+  "keywords": [
+    "oidc",
+    "oauth2",
+    "openid-connect",
+    "pkce",
+    "authorization-code",
+    "authentication",
+    "isomorphic",
+    "browser"
+  ],
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -31,6 +51,6 @@
     "happy-dom": "^20.11.6",
     "tsup": "^8.3.5",
     "typescript": "^5.7.2",
-    "vitest": "^2.1.8"
+    "vitest": "^4.1.11"
   }
 }
