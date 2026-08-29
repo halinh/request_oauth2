@@ -2,6 +2,7 @@ node_modules/
 dist/
 *.log
 .DS_Store
-/graphify-out
+graphify-out/
 CLAUDE.md
-.claude
+.claude/
+.superpowers/
