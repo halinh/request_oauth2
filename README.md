@@ -26,6 +26,13 @@ authorization and token-exchange steps, and it will **throw** if
 'undefined'`) — before making any network call. If you need a confidential
 exchange, perform it server-side, or proxy it through your own backend.
 
+A browser SPA can still drive a confidential client without ever holding the
+secret: keep `exchangeCodeForToken` in the browser but set its `tokenEndpoint`
+to a small backend proxy of yours that injects the `client_secret` and forwards
+to the real token endpoint (that proxy can decode the `id_token` too, saving a
+round-trip). The `react-login` + `decode-service` demo apps (see `docs/`) do
+exactly this via a `POST /token` proxy.
+
 ## Node server example
 
 ```ts
