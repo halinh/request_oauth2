@@ -10,6 +10,7 @@ describe('public API surface', () => {
     expect(typeof publicApi.generatePkcePair).toBe('function');
     expect(typeof publicApi.buildAuthorizationUrl).toBe('function');
     expect(typeof publicApi.exchangeCodeForToken).toBe('function');
+    expect(typeof publicApi.exchangeCodeForTokenViaBackend).toBe('function');
     expect(typeof publicApi.decodeIdToken).toBe('function');
     expect(typeof publicApi.createSession).toBe('function');
     expect(typeof publicApi.isAuthenticated).toBe('function');
@@ -23,6 +24,7 @@ describe('public API surface', () => {
     expect(typeof publicApi.DiscoveryError).toBe('function');
     expect(typeof publicApi.TokenExchangeError).toBe('function');
     expect(typeof publicApi.DecodeError).toBe('function');
+    expect(typeof publicApi.ProxyTokenExchangeError).toBe('function');
     expect(typeof publicApi.ConfidentialClientInBrowserError).toBe('function');
   });
 });

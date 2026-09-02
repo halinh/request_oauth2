@@ -3,8 +3,9 @@ export interface OidcClientConfig {
   clientId: string;
   redirectUri: string;
   scope: string;
-  decodeEndpoint: string;
+  decodeEndpoint?: string;
   clientSecret?: string;
+  tokenProxyEndpoint?: string;
 }
 
 export interface OidcConfiguration {
@@ -37,6 +38,10 @@ export interface TokenResponse {
 }
 
 export type Claims = Record<string, unknown>;
+
+export interface ProxyTokenResponse extends TokenResponse {
+  claims?: Claims;
+}
 
 export interface Session {
   accessToken: string;

@@ -22,6 +22,8 @@ export class TokenExchangeError extends OAuth2Error {}
 
 export class DecodeError extends OAuth2Error {}
 
+export class ProxyTokenExchangeError extends OAuth2Error {}
+
 export class ConfidentialClientInBrowserError extends OAuth2Error {
   constructor(message = 'clientSecret was provided but code is running in a browser; confidential-client credentials must never ship to a browser bundle. Omit clientSecret and use PKCE instead, or perform this exchange from a server/backend proxy.') {
     super(message);

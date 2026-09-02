@@ -1,14 +1,18 @@
 # request-oauth2
 
-Isomorphic TypeScript client for the OIDC/OAuth2 `authorization_code` + PKCE
-flow. It fetches an OIDC well-known discovery document, builds an
-authorization URL, exchanges an authorization code for tokens, and decodes
-the resulting `id_token` by POSTing it to a backend endpoint you control
-(the library never decodes the token itself).
+Isomorphic TypeScript client for the OIDC / OAuth2 **`authorization_code` + PKCE**
+flow. It reads the OIDC discovery document, builds the authorization URL,
+exchanges the authorization code for tokens, and turns the result into a plain
+session object.
 
-Works in both Node.js (18+) and the browser (e.g. React client components) —
-it only uses the global `fetch` and Web Crypto APIs, with zero runtime
-dependencies.
+- **Runs unchanged in Node 18+ and the browser** — only global `fetch` and Web
+  Crypto, **zero runtime dependencies**.
+- **PKCE is always on** (`code_challenge_method=S256`).
+- **Never decodes or verifies a JWT itself.** `decodeIdToken` POSTs the token to
+  an endpoint you control.
+- **Persists nothing.** `state`, `codeVerifier`, and the `Session` are yours to
+  store across the redirect.
+- Functional API — a client factory plus standalone functions, dual ESM/CJS.
 
 ## Install
 
@@ -16,24 +20,25 @@ dependencies.
 npm install request-oauth2
 ```
 
-## Security note
+## Three ways to exchange the code
 
-A `client_secret` (confidential client) must never be used from browser
-code — it would ship inside your JS bundle for anyone to read. This library
-always supports PKCE (`code_verifier` / `code_challenge`) for the
-authorization and token-exchange steps, and it will **throw** if
-`clientSecret` is passed while running in a browser (`typeof window !==
-'undefined'`) — before making any network call. If you need a confidential
-exchange, perform it server-side, or proxy it through your own backend.
+The redirect and PKCE steps are identical everywhere. What differs is **where the
+token exchange runs** and **who holds the `client_secret`**:
 
-A browser SPA can still drive a confidential client without ever holding the
-secret: keep `exchangeCodeForToken` in the browser but set its `tokenEndpoint`
-to a small backend proxy of yours that injects the `client_secret` and forwards
-to the real token endpoint (that proxy can decode the `id_token` too, saving a
-round-trip). The `react-login` + `decode-service` demo apps (see `docs/`) do
-exactly this via a `POST /token` proxy.
+| Pattern | Token exchange | `client_secret` | Use |
+| --- | --- | --- | --- |
+| **Public client** | `exchangeCodeForToken` in the browser, straight to the IdP | none (PKCE only) | SPA against an IdP that allows public clients |
+| **Backend proxy** | `exchangeCodeForTokenViaBackend` → your `/token` proxy → IdP | held by your proxy | SPA (or any client) that must authenticate as a confidential client without shipping the secret |
+| **Server-side** | `exchangeCodeForToken` on your server, with `clientSecret` | held by your server | classic web app / BFF |
 
-## Node server example
+A `client_secret` must **never** reach browser code. `exchangeCodeForToken`
+throws `ConfidentialClientInBrowserError` synchronously — before any network
+call — if `clientSecret` is set while `typeof window !== 'undefined'`.
+
+## Quick start — `createOidcClient`
+
+`createOidcClient(config)` wires discovery, PKCE, exchange, decode, and session
+creation into one object. Discovery is fetched once per client and memoized.
 
 ```ts
 import { createOidcClient } from 'request-oauth2';
@@ -41,88 +46,192 @@ import { createOidcClient } from 'request-oauth2';
 const client = createOidcClient({
   wellKnownUrl: 'https://idp.example.com/.well-known/openid-configuration',
   clientId: process.env.OIDC_CLIENT_ID!,
-  clientSecret: process.env.OIDC_CLIENT_SECRET, // server-side only
   redirectUri: 'https://app.example.com/callback',
   scope: 'openid profile email',
-  decodeEndpoint: 'https://backend.example.com/decode',
+  clientSecret: process.env.OIDC_CLIENT_SECRET, // server-side only; omit in a browser
+  decodeEndpoint: 'https://app.example.com/api/decode', // for authenticate() / decodeIdToken()
 });
 
 // GET /login
 app.get('/login', async (req, res) => {
   const { url, state, codeVerifier } = await client.startAuthorization();
-  // Persist state + codeVerifier across the redirect round-trip, e.g. a signed cookie.
-  req.session.oauth = { state, codeVerifier };
+  req.session.oauth = { state, codeVerifier }; // persist across the redirect
   res.redirect(url);
 });
 
 // GET /callback?code=...&state=...
 app.get('/callback', async (req, res) => {
   const { code, state } = req.query;
-  if (state !== req.session.oauth.state) {
-    return res.status(400).send('state mismatch');
-  }
-  const session = await client.authenticate(code, req.session.oauth.codeVerifier);
-  req.session.user = session; // now certified
+  if (state !== req.session.oauth.state) return res.status(400).send('state mismatch');
+
+  // authenticate() = exchangeCodeForToken -> decodeIdToken (if an id_token came back) -> createSession
+  req.session.user = await client.authenticate(code, req.session.oauth.codeVerifier);
   res.redirect('/');
 });
 ```
 
-## React client-side example (PKCE only, no secret)
+`config.clientSecret` and `config.decodeEndpoint` are optional. Set
+`tokenProxyEndpoint` instead to make the client use the backend-proxy exchange
+(below) via `client.exchangeCodeForTokenViaBackend(code, codeVerifier)`.
 
-The token exchange needs `client_secret` in most confidential setups, so
-from the browser you redirect with PKCE and then hand the `code` +
-`codeVerifier` to your own backend, which performs the exchange
-server-side.
+## Browser, public client (PKCE only)
+
+No secret, no client factory needed — compose the standalone functions:
 
 ```tsx
-import { generatePkcePair, buildAuthorizationUrl } from 'request-oauth2';
+import {
+  fetchOidcConfiguration,
+  generatePkcePair,
+  buildAuthorizationUrl,
+  exchangeCodeForToken,
+  decodeIdToken,
+  createSession,
+} from 'request-oauth2';
+
+const CONFIG = {
+  wellKnownUrl: 'https://idp.example.com/.well-known/openid-configuration',
+  clientId: 'my-public-client',
+  redirectUri: 'https://app.example.com/callback',
+  scope: 'openid profile email',
+  decodeEndpoint: 'https://app.example.com/api/decode',
+};
 
 async function login() {
-  const oidc = await fetch('https://idp.example.com/.well-known/openid-configuration').then((r) => r.json());
+  const discovery = await fetchOidcConfiguration(CONFIG.wellKnownUrl);
   const pkce = await generatePkcePair();
-  sessionStorage.setItem('codeVerifier', pkce.codeVerifier);
 
-  const { url } = buildAuthorizationUrl({
-    authorizationEndpoint: oidc.authorization_endpoint,
-    clientId: 'my-public-client',
-    redirectUri: 'https://app.example.com/callback',
-    scope: 'openid profile email',
+  const { url, state } = buildAuthorizationUrl({
+    authorizationEndpoint: discovery.authorization_endpoint,
+    clientId: CONFIG.clientId,
+    redirectUri: CONFIG.redirectUri,
+    scope: CONFIG.scope,
     codeChallenge: pkce.codeChallenge,
   });
+
+  // Store { state, codeVerifier } somewhere that survives the redirect (e.g. sessionStorage).
+  sessionStorage.setItem('oauth', JSON.stringify({ state, codeVerifier: pkce.codeVerifier }));
   window.location.href = url;
 }
 
 // On the /callback page:
-async function handleCallback(code: string) {
-  const codeVerifier = sessionStorage.getItem('codeVerifier')!;
-  // Your own backend route performs exchangeCodeForToken + decodeIdToken server-side
-  // and returns/stores the resulting session (e.g. as an HTTP-only cookie).
-  await fetch('/api/oauth/callback', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ code, codeVerifier }),
+async function handleCallback() {
+  const params = new URLSearchParams(window.location.search);
+  const { state, codeVerifier } = JSON.parse(sessionStorage.getItem('oauth')!);
+  if (params.get('state') !== state) throw new Error('state mismatch');
+
+  const discovery = await fetchOidcConfiguration(CONFIG.wellKnownUrl);
+  const tokens = await exchangeCodeForToken({
+    tokenEndpoint: discovery.token_endpoint,
+    clientId: CONFIG.clientId,
+    redirectUri: CONFIG.redirectUri,
+    code: params.get('code')!,
+    codeVerifier,
   });
+
+  const claims = tokens.id_token
+    ? await decodeIdToken({ decodeEndpoint: CONFIG.decodeEndpoint, idToken: tokens.id_token })
+    : null;
+
+  return createSession(tokens, claims);
 }
 ```
 
+## Browser or server, confidential via a backend proxy
+
+Drive a **confidential** client without the browser ever holding the secret.
+`exchangeCodeForTokenViaBackend` POSTs a credential-free JSON body —
+`{ code, code_verifier, redirect_uri }` and nothing else — to a small `/token`
+proxy of yours. The proxy adds `client_id` + `client_secret`, forwards to the
+real token endpoint, and (optionally) decodes the `id_token`, returning the token
+response with a `claims` object attached:
+
+```ts
+import { exchangeCodeForTokenViaBackend, createSession } from 'request-oauth2';
+
+const tokens = await exchangeCodeForTokenViaBackend({
+  tokenProxyEndpoint: 'https://app.example.com/api/token',
+  code,
+  codeVerifier,
+  redirectUri: 'https://app.example.com/callback',
+});
+
+// The proxy already decoded the id_token — no separate decodeIdToken round-trip.
+const session = createSession(tokens, tokens.claims ?? null);
+```
+
+A non-2xx from the proxy rejects with `ProxyTokenExchangeError` (carrying
+`status` and the parsed `body`). The same call works from a server route — it
+sends no credentials and never triggers the browser guard.
+
+**The proxy is yours to build.** A minimal one: accept the JSON body, add
+`grant_type=authorization_code` + your `client_id` + `client_secret`,
+`POST` it form-encoded to the IdP's `token_endpoint`, and return the JSON
+response (optionally verifying the `id_token` and adding `claims`). The
+`decode-service` + `react-login` + `next-login` demos under `docs/` implement
+exactly this.
+
 ## API reference
+
+### `createOidcClient(config): OidcClient`
+
+`config` (`OidcClientConfig`): `wellKnownUrl`, `clientId`, `redirectUri`,
+`scope` (required); `clientSecret`, `decodeEndpoint`, `tokenProxyEndpoint`
+(optional).
+
+| Method | Description |
+| --- | --- |
+| `startAuthorization(overrides?)` | Runs discovery + PKCE, returns `{ url, state, codeVerifier }`. `overrides`: `{ state?, extraParams? }`. |
+| `exchangeCodeForToken(code, codeVerifier)` | Exchanges against the discovered `token_endpoint`, using `config.clientSecret` if present. → `TokenResponse` |
+| `exchangeCodeForTokenViaBackend(code, codeVerifier)` | Exchanges via `config.tokenProxyEndpoint` (no discovery call). Throws `ProxyTokenExchangeError` if the endpoint is not configured. → `ProxyTokenResponse` |
+| `decodeIdToken(idToken)` | POSTs to `config.decodeEndpoint`. Throws `DecodeError` if it is not configured. → `Claims` |
+| `createSession(tokenResponse, claims)` | Builds a `Session`. |
+| `authenticate(code, codeVerifier)` | `exchangeCodeForToken` → `decodeIdToken` (only if an `id_token` came back) → `createSession`. → `Session` |
+
+### Standalone functions
 
 | Export | Description |
 | --- | --- |
-| `createOidcClient(config)` | Factory combining discovery, PKCE, token exchange, decode, and session creation. Returns `{ startAuthorization, exchangeCodeForToken, decodeIdToken, createSession, authenticate }`. |
-| `fetchOidcConfiguration(wellKnownUrl)` | Fetches and parses the OIDC discovery document. |
-| `generateCodeVerifier() / generateCodeChallenge() / generatePkcePair()` | PKCE helpers built on Web Crypto. |
-| `buildAuthorizationUrl(params)` | Builds an authorization URL; `codeChallenge` is required. |
-| `exchangeCodeForToken(params)` | Exchanges an authorization code for tokens. Throws `ConfidentialClientInBrowserError` if `clientSecret` is used in a browser. |
-| `decodeIdToken(params)` | POSTs the `id_token` to your `decodeEndpoint` and returns the decoded claims. |
-| `createSession(tokenResponse, claims)` | Builds an in-memory `Session` (tokens + expiry + claims). |
-| `isAuthenticated(session)` / `isExpired(session)` / `getAccessToken(session)` / `getClaims(session)` | Session helper functions. |
-| `OAuth2Error` and subclasses | `DiscoveryError`, `TokenExchangeError`, `DecodeError`, `ConfidentialClientInBrowserError`. |
+| `fetchOidcConfiguration(wellKnownUrl)` | Fetches and parses the discovery document. → `OidcConfiguration` |
+| `generateCodeVerifier(length?)` / `generateCodeChallenge(verifier)` / `generatePkcePair(length?)` | PKCE helpers on Web Crypto. `generatePkcePair` → `{ codeVerifier, codeChallenge, codeChallengeMethod: 'S256' }` |
+| `buildAuthorizationUrl(params)` | Builds the URL (`response_type=code`, `S256`). Generates `state` if you don't pass one. → `{ url, state }` |
+| `exchangeCodeForToken(params)` | Form-urlencoded exchange against a real token endpoint. Params: `{ tokenEndpoint, clientId, redirectUri, code, codeVerifier, clientSecret? }`. Throws `ConfidentialClientInBrowserError` if `clientSecret` is set in a browser. → `TokenResponse` |
+| `exchangeCodeForTokenViaBackend(params)` | JSON `{ code, code_verifier, redirect_uri }` to your `/token` proxy. Params: `{ tokenProxyEndpoint, code, codeVerifier, redirectUri }`. Throws `ProxyTokenExchangeError` on non-2xx. → `ProxyTokenResponse` |
+| `decodeIdToken(params)` | POSTs `{ id_token }` to `decodeEndpoint`. Params: `{ decodeEndpoint, idToken }`. Throws `DecodeError` on non-2xx. → `Claims` |
+| `createSession(tokenResponse, claims)` | → `Session` (`accessToken`, `idToken?`, `refreshToken?`, `tokenType?`, `scope?`, `expiresAt: number \| null`, `claims`). |
+| `isAuthenticated(session)` / `isExpired(session, skewSeconds?)` / `getAccessToken(session)` / `getClaims(session)` | Session helpers. |
 
-Note: `state` and `codeVerifier` returned by `startAuthorization()` are not
-persisted by the library — you're responsible for storing them (cookie,
-`sessionStorage`, etc.) across the redirect round-trip and passing them back
-in on the callback.
+### Errors
+
+All extend `OAuth2Error` (which carries `name`, `message`, and optional
+`status` / `body`). Discriminate with `instanceof`.
+
+`DiscoveryError` · `TokenExchangeError` · `ProxyTokenExchangeError` ·
+`DecodeError` · `ConfidentialClientInBrowserError`
+
+### Wire vs. native shapes
+
+Types crossing the wire keep snake_case (`TokenResponse.access_token`,
+`ProxyTokenResponse.claims`, `OidcConfiguration.token_endpoint`). Library-native
+types use camelCase (`Session.accessToken`, `PkcePair.codeVerifier`).
+
+## What you own
+
+`state`, `codeVerifier`, and the `Session` are **not** persisted by the library.
+Store `state` + `codeVerifier` (signed cookie, `sessionStorage`, …) before the
+redirect and pass them back on the callback. Token storage, refresh rotation,
+silent renew, and logout propagation are out of scope.
+
+## Development
+
+```sh
+npm test           # vitest run — full suite
+npm run test:watch # vitest watch
+npm run typecheck  # tsc --noEmit
+npm run build      # tsup -> dist/{index.js,index.cjs,index.d.ts}
+```
+
+`npm run typecheck` + `npm test` are the full verification gate; there is no
+linter.
 
 ## License
 

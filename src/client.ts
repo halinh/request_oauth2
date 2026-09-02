@@ -1,10 +1,19 @@
 import { buildAuthorizationUrl } from './authorizationUrl';
+import { exchangeCodeForTokenViaBackend as exchangeCodeForTokenViaBackendRequest } from './backendTokenExchange';
 import { decodeIdToken as decodeIdTokenRequest } from './decode';
 import { fetchOidcConfiguration } from './discovery';
+import { DecodeError, ProxyTokenExchangeError } from './errors';
 import { generatePkcePair } from './pkce';
 import { createSession as buildSession } from './session';
 import { exchangeCodeForToken as exchangeCodeForTokenRequest } from './tokenExchange';
-import type { AuthorizationUrlResult, Claims, OidcClientConfig, Session, TokenResponse } from './types';
+import type {
+  AuthorizationUrlResult,
+  Claims,
+  OidcClientConfig,
+  ProxyTokenResponse,
+  Session,
+  TokenResponse,
+} from './types';
 
 export interface StartAuthorizationOverrides {
   state?: string;
@@ -14,6 +23,7 @@ export interface StartAuthorizationOverrides {
 export interface OidcClient {
   startAuthorization(overrides?: StartAuthorizationOverrides): Promise<AuthorizationUrlResult>;
   exchangeCodeForToken(code: string, codeVerifier: string): Promise<TokenResponse>;
+  exchangeCodeForTokenViaBackend(code: string, codeVerifier: string): Promise<ProxyTokenResponse>;
   decodeIdToken(idToken: string): Promise<Claims>;
   createSession(tokenResponse: TokenResponse, claims: Claims | null): Session;
   authenticate(code: string, codeVerifier: string): Promise<Session>;
@@ -58,7 +68,27 @@ export function createOidcClient(config: OidcClientConfig): OidcClient {
     });
   }
 
+  async function exchangeCodeForTokenViaBackend(
+    code: string,
+    codeVerifier: string,
+  ): Promise<ProxyTokenResponse> {
+    if (config.tokenProxyEndpoint === undefined) {
+      throw new ProxyTokenExchangeError('createOidcClient: tokenProxyEndpoint is not configured');
+    }
+
+    return exchangeCodeForTokenViaBackendRequest({
+      tokenProxyEndpoint: config.tokenProxyEndpoint,
+      code,
+      codeVerifier,
+      redirectUri: config.redirectUri,
+    });
+  }
+
   async function decodeIdToken(idToken: string): Promise<Claims> {
+    if (config.decodeEndpoint === undefined) {
+      throw new DecodeError('createOidcClient: decodeEndpoint is not configured');
+    }
+
     return decodeIdTokenRequest({ decodeEndpoint: config.decodeEndpoint, idToken });
   }
 
@@ -72,5 +102,12 @@ export function createOidcClient(config: OidcClientConfig): OidcClient {
     return createSession(tokenResponse, claims);
   }
 
-  return { startAuthorization, exchangeCodeForToken, decodeIdToken, createSession, authenticate };
+  return {
+    startAuthorization,
+    exchangeCodeForToken,
+    exchangeCodeForTokenViaBackend,
+    decodeIdToken,
+    createSession,
+    authenticate,
+  };
 }

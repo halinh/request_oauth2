@@ -14,6 +14,9 @@ export type { ExchangeCodeForTokenParams } from './tokenExchange';
 export { decodeIdToken } from './decode';
 export type { DecodeIdTokenParams } from './decode';
 
+export { exchangeCodeForTokenViaBackend } from './backendTokenExchange';
+export type { ExchangeCodeForTokenViaBackendParams } from './backendTokenExchange';
+
 export { createSession, getAccessToken, getClaims, isAuthenticated, isExpired } from './session';
 
 export {
@@ -21,6 +24,7 @@ export {
   DecodeError,
   DiscoveryError,
   OAuth2Error,
+  ProxyTokenExchangeError,
   TokenExchangeError,
 } from './errors';
 export type { OAuth2ErrorOptions } from './errors';
@@ -31,6 +35,7 @@ export type {
   OidcClientConfig,
   OidcConfiguration,
   PkcePair,
+  ProxyTokenResponse,
   Session,
   TokenResponse,
 } from './types';
